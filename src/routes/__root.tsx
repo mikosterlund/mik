@@ -84,9 +84,11 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function ShellInner() {
   const { state } = useAppStore();
+  const [mounted, setMounted] = useState(false);
   const [phase, setPhase] = useState<"loading" | "intro" | "gate" | "granted" | "app">("loading");
 
   useEffect(() => {
+    setMounted(true);
     const unlocked = isAccessUnlocked();
     if (shouldShowIntro()) {
       setPhase("intro");
@@ -97,17 +99,24 @@ function ShellInner() {
 
   const ambient = useAmbient();
   useEffect(() => {
+    if (!mounted) return;
     if (phase === "app") {
       const t = setTimeout(() => ambient.activate(), 400);
       return () => clearTimeout(t);
     } else {
       ambient.deactivate();
     }
-  }, [phase, ambient]);
+  }, [phase, ambient, mounted]);
 
   const afterIntro = () => {
     setPhase(isAccessUnlocked() ? "app" : "gate");
   };
+
+  if (!mounted) {
+    // SSR / pre-hydration: render an empty shell to avoid any browser-API
+    // access during server rendering. All interactive content mounts on client.
+    return <div className="min-h-screen bg-[#05050b]" />;
+  }
 
   return (
     <div className="min-h-screen">
@@ -126,7 +135,6 @@ function ShellInner() {
     </div>
   );
 }
-
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();

@@ -268,10 +268,12 @@ export function IntroScreen({ onComplete }: { onComplete: () => void }) {
 }
 
 export function shouldShowIntro(): boolean {
+  if (typeof window === "undefined") return true;
   try {
     return sessionStorage.getItem(SEEN_KEY) !== todayKey();
   } catch {
     return true;
   }
 }
+
 

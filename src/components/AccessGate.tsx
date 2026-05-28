@@ -6,6 +6,7 @@ export const ACCESS_KEY = "tj_access_unlocked";
 const ACCESS_CODE = "2151";
 
 export function isAccessUnlocked(): boolean {
+  if (typeof window === "undefined") return false;
   try {
     return sessionStorage.getItem(ACCESS_KEY) === "1";
   } catch {
@@ -13,11 +14,13 @@ export function isAccessUnlocked(): boolean {
   }
 }
 export function resetAccess() {
+  if (typeof window === "undefined") return;
   try {
     sessionStorage.removeItem(ACCESS_KEY);
     localStorage.removeItem(ACCESS_KEY);
   } catch {}
 }
+
 export function AccessGate({ onUnlock }: { onUnlock: () => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState(false);
