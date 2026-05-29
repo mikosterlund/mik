@@ -14,53 +14,20 @@ import type {
   RedFlagItem,
   JournalEntry,
   WeeklyReview,
+  AudioSettings,
+  UserSettings,
 } from "./types";
 import { APEX_ACCOUNT, buildApexTrades } from "./apexData";
-
-const STORAGE_KEY = "trading_journal_state_v1";
-const LEGACY_KEYS = ["tj_state_v5"];
-
-function safeLocalStorage(): Storage | null {
-  try {
-    if (typeof window === "undefined") return null;
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
-function readPersistedState(): AppState | null {
-  const ls = safeLocalStorage();
-  if (!ls) return null;
-  try {
-    let raw = ls.getItem(STORAGE_KEY);
-    if (!raw) {
-      for (const k of LEGACY_KEYS) {
-        const legacy = ls.getItem(k);
-        if (legacy) {
-          raw = legacy;
-          try { ls.setItem(STORAGE_KEY, legacy); } catch {}
-          break;
-        }
-      }
-    }
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return { ...emptyState, ...parsed } as AppState;
-  } catch {
-    return null;
-  }
-}
-
-function writePersistedState(state: AppState) {
-  const ls = safeLocalStorage();
-  if (!ls) return;
-  try {
-    ls.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    // ignore quota/serialization errors
-  }
-}
+import {
+  DEFAULT_AUDIO_SETTINGS,
+  DEFAULT_USER_SETTINGS,
+  loadData,
+  saveData,
+  updateDailyJournal,
+  updateSettings,
+  updateTrades,
+  updateWeeklyReviews,
+} from "./storage";
 
 const daysAgo = (n: number) => {
   const d = new Date();
@@ -140,6 +107,8 @@ function buildDefaultState(): AppState {
     notesByDate: {},
     checklistByDate: {},
     weeklyReviews: {},
+    audioSettings: DEFAULT_AUDIO_SETTINGS,
+    userSettings: DEFAULT_USER_SETTINGS,
     apexImported: true,
   };
 }
@@ -154,6 +123,8 @@ const emptyState: AppState = {
   notesByDate: {},
   checklistByDate: {},
   weeklyReviews: {},
+  audioSettings: DEFAULT_AUDIO_SETTINGS,
+  userSettings: DEFAULT_USER_SETTINGS,
   apexImported: false,
 };
 
@@ -179,6 +150,8 @@ interface Ctx {
   // weekly
   getWeeklyReview: (key: string) => WeeklyReview | undefined;
   setWeeklyReview: (key: string, r: Partial<WeeklyReview>) => void;
+  setAudioSettings: (settings: Partial<AudioSettings>) => void;
+  setUserSettings: (settings: Partial<UserSettings>) => void;
   clearTrades: () => void;
   reset: () => void;
   loadApexData: () => void;
@@ -192,13 +165,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // user data with default/demo data on mount. On the server (SSR/prerender)
   // window is undefined, so we start with emptyState and load on mount.
   const [state, setStateRaw] = useState<AppState>(() => {
-    const persisted = readPersistedState();
+    const persisted = loadData(emptyState);
     if (persisted) return persisted;
     if (typeof window === "undefined") return emptyState;
     // First-ever visit on this device: seed demo data AND persist it so we
     // never treat the next load as a fresh install.
     const seeded = buildDefaultState();
-    writePersistedState(seeded);
+    saveData(seeded);
     return seeded;
   });
   const [hydrated, setHydrated] = useState<boolean>(() => typeof window !== "undefined");
@@ -206,11 +179,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // If we started on the server (no window), do the load on mount.
   useEffect(() => {
     if (hydrated) return;
-    const persisted = readPersistedState();
+    const persisted = loadData(emptyState);
     if (persisted) setStateRaw(persisted);
     else {
       const seeded = buildDefaultState();
-      writePersistedState(seeded);
+      saveData(seeded);
       setStateRaw(seeded);
     }
     setHydrated(true);
@@ -224,7 +197,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         typeof updater === "function"
           ? (updater as (p: AppState) => AppState)(prev)
           : updater;
-      writePersistedState(next);
+      saveData(next);
       return next;
     });
   };
@@ -232,7 +205,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // Belt-and-braces: also persist on visibility/pagehide events.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const flush = () => writePersistedState(state);
+    const flush = () => saveData(state);
     window.addEventListener("pagehide", flush);
     window.addEventListener("beforeunload", flush);
     document.addEventListener("visibilitychange", flush);
@@ -249,7 +222,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     () => ({
       state,
       hydrated,
-      setAccount: (a) => setState((s) => ({ ...s, account: { ...s.account, ...a } })),
+      setAccount: (a) =>
+        setState((s) => updateSettings(s, { account: { ...s.account, ...a } })),
       addTrade: (t) =>
         setState((s) => {
           const trade: Trade = {
@@ -257,89 +231,115 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             id: crypto.randomUUID(),
             rMultiple: t.risk ? +(t.pnl / t.risk).toFixed(2) : 0,
           };
-          return { ...s, trades: [trade, ...s.trades] };
+          return updateTrades(s, [trade, ...s.trades]);
         }),
       updateTrade: (id, patch) =>
-        setState((s) => ({
-          ...s,
-          trades: s.trades.map((t) => {
+        setState((s) =>
+          updateTrades(
+            s,
+            s.trades.map((t) => {
             if (t.id !== id) return t;
             const merged = { ...t, ...patch };
             merged.rMultiple = merged.risk ? +(merged.pnl / merged.risk).toFixed(2) : 0;
             return merged;
-          }),
-        })),
-      deleteTrade: (id) => setState((s) => ({ ...s, trades: s.trades.filter((t) => t.id !== id) })),
+            }),
+          ),
+        ),
+      deleteTrade: (id) => setState((s) => updateTrades(s, s.trades.filter((t) => t.id !== id))),
       toggleChecklist: (id) =>
-        setState((s) => ({
-          ...s,
-          checklist: s.checklist.map((c) => (c.id === id ? { ...c, checked: !c.checked } : c)),
-        })),
-      setChecklist: (items) => setState((s) => ({ ...s, checklist: items })),
+        setState((s) =>
+          updateSettings(s, {
+            checklist: s.checklist.map((c) => (c.id === id ? { ...c, checked: !c.checked } : c)),
+          }),
+        ),
+      setChecklist: (items) => setState((s) => updateSettings(s, { checklist: items })),
       toggleRedFlag: (id) =>
-        setState((s) => ({
-          ...s,
-          redFlags: s.redFlags.map((c) => (c.id === id ? { ...c, flagged: !c.flagged } : c)),
-        })),
-      setRedFlags: (items) => setState((s) => ({ ...s, redFlags: items })),
-      setNotes: (notes) => setState((s) => ({ ...s, notes })),
+        setState((s) =>
+          updateSettings(s, {
+            redFlags: s.redFlags.map((c) => (c.id === id ? { ...c, flagged: !c.flagged } : c)),
+          }),
+        ),
+      setRedFlags: (items) => setState((s) => updateSettings(s, { redFlags: items })),
+      setNotes: (notes) => setState((s) => updateSettings(s, { notes })),
       setJournal: (date, j) =>
-        setState((s) => ({
-          ...s,
-          journals: {
-            ...s.journals,
-            [date]: {
-              date,
-              emotion: s.journals[date]?.emotion ?? 7,
-              discipline: s.journals[date]?.discipline ?? 7,
-              confidence: s.journals[date]?.confidence ?? 7,
-              sleepHours: s.journals[date]?.sleepHours ?? 7,
-              marketCondition: s.journals[date]?.marketCondition ?? "",
-              sessionNotes: s.journals[date]?.sessionNotes ?? "",
-              ...j,
+        setState((s) =>
+          updateDailyJournal(s, {
+            journals: {
+              ...s.journals,
+              [date]: {
+                date,
+                emotion: s.journals[date]?.emotion ?? 7,
+                discipline: s.journals[date]?.discipline ?? 7,
+                confidence: s.journals[date]?.confidence ?? 7,
+                sleepHours: s.journals[date]?.sleepHours ?? 7,
+                marketCondition: s.journals[date]?.marketCondition ?? "",
+                sessionNotes: s.journals[date]?.sessionNotes ?? "",
+                ...j,
+              },
             },
-          },
-        })),
+            notesByDate: s.notesByDate,
+            checklistByDate: s.checklistByDate,
+          }),
+        ),
       getNotesForDate: (date) => state.notesByDate[date] ?? "",
       setNotesForDate: (date, n) =>
-        setState((s) => ({ ...s, notesByDate: { ...s.notesByDate, [date]: n } })),
+        setState((s) =>
+          updateDailyJournal(s, {
+            journals: s.journals,
+            notesByDate: { ...s.notesByDate, [date]: n },
+            checklistByDate: s.checklistByDate,
+          }),
+        ),
       getChecklistForDate: (date) =>
         state.checklistByDate[date] ?? s_template(state.checklist),
       setChecklistForDate: (date, items) =>
-        setState((s) => ({ ...s, checklistByDate: { ...s.checklistByDate, [date]: items } })),
+        setState((s) =>
+          updateDailyJournal(s, {
+            journals: s.journals,
+            notesByDate: s.notesByDate,
+            checklistByDate: { ...s.checklistByDate, [date]: items },
+          }),
+        ),
       toggleChecklistForDate: (date, id) =>
         setState((s) => {
           const current = s.checklistByDate[date] ?? s_template(s.checklist);
           const next = current.map((c) => (c.id === id ? { ...c, checked: !c.checked } : c));
-          return { ...s, checklistByDate: { ...s.checklistByDate, [date]: next } };
+          return updateDailyJournal(s, {
+            journals: s.journals,
+            notesByDate: s.notesByDate,
+            checklistByDate: { ...s.checklistByDate, [date]: next },
+          });
         }),
       getWeeklyReview: (key) => state.weeklyReviews[key],
       setWeeklyReview: (key, r) =>
-        setState((s) => ({
-          ...s,
-          weeklyReviews: {
+        setState((s) =>
+          updateWeeklyReviews(s, {
             ...s.weeklyReviews,
             [key]: {
-              weekKey: key,
-              wins: s.weeklyReviews[key]?.wins ?? "",
-              mistakes: s.weeklyReviews[key]?.mistakes ?? "",
-              improvements: s.weeklyReviews[key]?.improvements ?? "",
-              notes: s.weeklyReviews[key]?.notes ?? "",
-              updatedAt: new Date().toISOString(),
-              ...r,
+                weekKey: key,
+                wins: s.weeklyReviews[key]?.wins ?? "",
+                mistakes: s.weeklyReviews[key]?.mistakes ?? "",
+                improvements: s.weeklyReviews[key]?.improvements ?? "",
+                notes: s.weeklyReviews[key]?.notes ?? "",
+                updatedAt: new Date().toISOString(),
+                ...r,
             },
-          },
-        })),
-      clearTrades: () => setState((s) => ({ ...s, trades: [], apexImported: false })),
-      reset: () => setState(buildDefaultState()),
+          }),
+        ),
+      setAudioSettings: (settings) =>
+        setState((s) => updateSettings(s, { audioSettings: { ...s.audioSettings, ...settings } })),
+      setUserSettings: (settings) =>
+        setState((s) => updateSettings(s, { userSettings: { ...s.userSettings, ...settings } })),
+      clearTrades: () => setState((s) => updateTrades({ ...s, apexImported: false }, [])),
+      reset: () => setState((s) => updateSettings(s, buildDefaultState())),
       loadApexData: () =>
-        setState((s) => ({
-          ...s,
-          account: { ...s.account, ...APEX_ACCOUNT },
-          trades: buildApexTrades(),
-          apexImported: true,
-        })),
-      setApexImported: (v) => setState((s) => ({ ...s, apexImported: v })),
+        setState((s) =>
+          updateTrades(
+            updateSettings(s, { account: { ...s.account, ...APEX_ACCOUNT }, apexImported: true }),
+            buildApexTrades(),
+          ),
+        ),
+      setApexImported: (v) => setState((s) => updateSettings(s, { apexImported: v })),
     }),
     [state, hydrated],
   );

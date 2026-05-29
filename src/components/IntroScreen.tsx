@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { TrendingUp, Volume2, VolumeX } from "lucide-react";
+import { useAppStore } from "@/lib/store";
 
 const QUOTES = [
   "Your edge works whether you feel confident or not.",
@@ -23,7 +24,6 @@ const GRATITUDE = [
   "You’re already further than you once dreamed.",
 ];
 
-const SOUND_KEY = "tj_intro_sound";
 const SEEN_KEY = "tj_intro_seen";
 
 function todayKey() {
@@ -80,23 +80,15 @@ function playClick(ctx: AudioContext, muted: boolean) {
 }
 
 export function IntroScreen({ onComplete }: { onComplete: () => void }) {
+  const { state, setUserSettings } = useAppStore();
   const [quote] = useState(() => QUOTES[Math.floor(Math.random() * QUOTES.length)]);
   const [gratitude] = useState(() => GRATITUDE[Math.floor(Math.random() * GRATITUDE.length)]);
-  const [muted, setMuted] = useState<boolean>(false);
+  const [muted, setMuted] = useState<boolean>(() => state.userSettings.introSound === "muted");
   const [visible, setVisible] = useState(true);
 
   useEffect(() => {
-    // Force unmuted default — reset any legacy stored muted value
-    try {
-      const s = localStorage.getItem(SOUND_KEY);
-      if (s === "muted" || s == null) {
-        localStorage.setItem(SOUND_KEY, "on");
-        setMuted(false);
-      } else {
-        setMuted(s === "muted");
-      }
-    } catch {}
-  }, []);
+    setMuted(state.userSettings.introSound === "muted");
+  }, [state.userSettings.introSound]);
 
   useEffect(() => {
     let ctx: AudioContext | null = null;
@@ -140,14 +132,14 @@ export function IntroScreen({ onComplete }: { onComplete: () => void }) {
 
   const finish = () => {
     setVisible(false);
-    try { localStorage.setItem(SEEN_KEY, todayKey()); } catch {}
+    try { sessionStorage.setItem(SEEN_KEY, todayKey()); } catch {}
     setTimeout(onComplete, 600);
   };
 
   const toggleMute = () => {
     const next = !muted;
     setMuted(next);
-    try { localStorage.setItem(SOUND_KEY, next ? "muted" : "on"); } catch {}
+    setUserSettings({ introSound: next ? "muted" : "on" });
   };
 
   return (

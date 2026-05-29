@@ -69,6 +69,17 @@ export interface WeeklyReview {
   updatedAt: string;
 }
 
+export interface AudioSettings {
+  enabled: boolean;
+  muted: boolean;
+  volume: number;
+  src: string;
+}
+
+export interface UserSettings {
+  introSound?: "on" | "muted";
+}
+
 export interface AppState {
   account: Account;
   trades: Trade[];
@@ -81,5 +92,7 @@ export interface AppState {
   notesByDate: Record<string, string>;
   checklistByDate: Record<string, ChecklistItem[]>;
   weeklyReviews: Record<string, WeeklyReview>;
+  audioSettings: AudioSettings;
+  userSettings: UserSettings;
   apexImported?: boolean;
 }

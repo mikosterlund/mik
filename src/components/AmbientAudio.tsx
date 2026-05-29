@@ -1,14 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Volume2, VolumeX, Music2, Music } from "lucide-react";
+import { useAppStore } from "@/lib/store";
 
 const SRC_DEFAULT = "/audio/ambient.mp3";
-const LS_VOL = "tj_amb_vol";
-const LS_MUTED = "tj_amb_muted";
-const LS_ENABLED = "tj_amb_enabled";
-const LS_SRC = "tj_amb_src";
-const LS_VOL_MIGRATION = "tj_amb_vol_migrated_v2";
-const DEFAULT_VOL = 0.05;
 type Ctx = {
   enabled: boolean;
   muted: boolean;
@@ -30,46 +25,13 @@ export function useAmbient() {
   return c;
 }
 
-function readLS<T>(key: string, fallback: T, parse: (s: string) => T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw == null) return fallback;
-    return parse(raw);
-  } catch {
-    return fallback;
-  }
-}
-
 export function AmbientProvider({ children }: { children: React.ReactNode }) {
-  const [enabled, setEnabledState] = useState(true);
-  const [muted, setMutedState] = useState(false);
-  const [volume, setVolumeState] = useState(0.05);
-  const [src, setSrcState] = useState(SRC_DEFAULT);
+  const { state, setAudioSettings } = useAppStore();
+  const { enabled, muted, volume, src } = state.audioSettings;
   const [active, setActive] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fadeRef = useRef<number | null>(null);
   const pendingPlay = useRef(false);
-
-  // hydrate from LS
-  useEffect(() => {
-    // One-time migration: reset stale 0.18 default to new 0.05 default
-    try {
-      if (!localStorage.getItem(LS_VOL_MIGRATION)) {
-        const raw = localStorage.getItem(LS_VOL);
-        if (raw != null) {
-          const v = parseFloat(raw);
-          if (!isNaN(v) && Math.abs(v - 0.18) < 0.001) {
-            localStorage.setItem(LS_VOL, String(DEFAULT_VOL));
-          }
-        }
-        localStorage.setItem(LS_VOL_MIGRATION, "1");
-      }
-    } catch {}
-    setVolumeState(readLS(LS_VOL, DEFAULT_VOL, (s) => Math.min(1, Math.max(0, parseFloat(s)))));
-    setMutedState(readLS(LS_MUTED, false, (s) => s === "1"));
-    setEnabledState(readLS(LS_ENABLED, true, (s) => s !== "0"));
-    setSrcState(readLS(LS_SRC, SRC_DEFAULT, (s) => s || SRC_DEFAULT));
-  }, []);
 
   // construct audio element once
   useEffect(() => {
@@ -157,20 +119,16 @@ export function AmbientProvider({ children }: { children: React.ReactNode }) {
   // persistence wrappers
   const setVolume = (v: number) => {
     const clamped = Math.min(1, Math.max(0, v));
-    setVolumeState(clamped);
-    try { localStorage.setItem(LS_VOL, String(clamped)); } catch {}
+    setAudioSettings({ volume: clamped });
   };
   const setMuted = (b: boolean) => {
-    setMutedState(b);
-    try { localStorage.setItem(LS_MUTED, b ? "1" : "0"); } catch {}
+    setAudioSettings({ muted: b });
   };
   const setEnabled = (b: boolean) => {
-    setEnabledState(b);
-    try { localStorage.setItem(LS_ENABLED, b ? "1" : "0"); } catch {}
+    setAudioSettings({ enabled: b });
   };
   const setSrc = (s: string) => {
-    setSrcState(s);
-    try { localStorage.setItem(LS_SRC, s); } catch {}
+    setAudioSettings({ src: s || SRC_DEFAULT });
   };
 
   const activate = () => setActive(true);
