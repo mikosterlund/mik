@@ -17,7 +17,50 @@ import type {
 } from "./types";
 import { APEX_ACCOUNT, buildApexTrades } from "./apexData";
 
-const STORAGE_KEY = "tj_state_v5";
+const STORAGE_KEY = "trading_journal_state_v1";
+const LEGACY_KEYS = ["tj_state_v5"];
+
+function safeLocalStorage(): Storage | null {
+  try {
+    if (typeof window === "undefined") return null;
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readPersistedState(): AppState | null {
+  const ls = safeLocalStorage();
+  if (!ls) return null;
+  try {
+    let raw = ls.getItem(STORAGE_KEY);
+    if (!raw) {
+      for (const k of LEGACY_KEYS) {
+        const legacy = ls.getItem(k);
+        if (legacy) {
+          raw = legacy;
+          try { ls.setItem(STORAGE_KEY, legacy); } catch {}
+          break;
+        }
+      }
+    }
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return { ...emptyState, ...parsed } as AppState;
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedState(state: AppState) {
+  const ls = safeLocalStorage();
+  if (!ls) return;
+  try {
+    ls.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore quota/serialization errors
+  }
+}
 
 const daysAgo = (n: number) => {
   const d = new Date();
@@ -145,30 +188,62 @@ interface Ctx {
 const AppStoreCtx = createContext<Ctx | null>(null);
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AppState>(emptyState);
-  const [hydrated, setHydrated] = useState(false);
+  // Initialize synchronously from localStorage so we NEVER overwrite saved
+  // user data with default/demo data on mount. On the server (SSR/prerender)
+  // window is undefined, so we start with emptyState and load on mount.
+  const [state, setStateRaw] = useState<AppState>(() => {
+    const persisted = readPersistedState();
+    if (persisted) return persisted;
+    if (typeof window === "undefined") return emptyState;
+    // First-ever visit on this device: seed demo data AND persist it so we
+    // never treat the next load as a fresh install.
+    const seeded = buildDefaultState();
+    writePersistedState(seeded);
+    return seeded;
+  });
+  const [hydrated, setHydrated] = useState<boolean>(() => typeof window !== "undefined");
 
+  // If we started on the server (no window), do the load on mount.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setState({ ...emptyState, ...parsed });
-      } else {
-        setState(buildDefaultState());
-      }
-    } catch {
-      setState(buildDefaultState());
+    if (hydrated) return;
+    const persisted = readPersistedState();
+    if (persisted) setStateRaw(persisted);
+    else {
+      const seeded = buildDefaultState();
+      writePersistedState(seeded);
+      setStateRaw(seeded);
     }
     setHydrated(true);
-  }, []);
+  }, [hydrated]);
 
+  // setState wrapper: persist SYNCHRONOUSLY on every mutation so data
+  // survives even an immediate tab close after the action.
+  const setState = (updater: AppState | ((prev: AppState) => AppState)) => {
+    setStateRaw((prev) => {
+      const next =
+        typeof updater === "function"
+          ? (updater as (p: AppState) => AppState)(prev)
+          : updater;
+      writePersistedState(next);
+      return next;
+    });
+  };
+
+  // Belt-and-braces: also persist on visibility/pagehide events.
   useEffect(() => {
-    if (!hydrated) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {}
-  }, [state, hydrated]);
+    if (typeof window === "undefined") return;
+    const flush = () => writePersistedState(state);
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", flush);
+    };
+  }, [state]);
+
+
 
   const value: Ctx = useMemo(
     () => ({
