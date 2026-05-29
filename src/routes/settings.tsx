@@ -13,10 +13,11 @@ export const Route = createFileRoute("/settings")({
 });
 
 function SettingsPage() {
-  const { state, setAccount, setChecklist, setRedFlags, clearTrades, reset, loadApexData } =
+  const { state, setAccount, setChecklist, setRedFlags, clearTrades, reset, loadApexData, setUserSettings } =
     useAppStore();
   const a = state.account;
   const apexActive = !!state.apexImported;
+  const rain = state.userSettings.rainAmbience ?? "subtle";
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -126,6 +127,32 @@ function SettingsPage() {
         >
           Reset to Defaults
         </Button>
+      </div>
+
+      <div className="glass-card flex flex-wrap items-center gap-4 p-6">
+        <div className="flex-1 min-w-[260px]">
+          <h3 className="section-label neon-text-cyan">Rain Ambience</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Faint cinematic rain over the dashboard — late-night penthouse mood.
+            Pauses automatically when the tab is hidden.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          {(["off", "subtle", "medium"] as const).map((opt) => (
+            <Button
+              key={opt}
+              variant={rain === opt ? "default" : "outline"}
+              onClick={() => setUserSettings({ rainAmbience: opt })}
+              className={
+                rain === opt
+                  ? "bg-gradient-to-r from-[var(--neon-purple)] to-[oklch(0.55_0.25_220)] text-white capitalize"
+                  : "capitalize"
+              }
+            >
+              {opt}
+            </Button>
+          ))}
+        </div>
       </div>
 
       <div className="glass-card flex flex-wrap items-center gap-4 p-6">

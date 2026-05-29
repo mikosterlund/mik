@@ -14,6 +14,7 @@ import { IntroScreen, shouldShowIntro } from "@/components/IntroScreen";
 import { AuthGate } from "@/components/AuthGate";
 import { AccessGranted } from "@/components/AccessGranted";
 import { AmbientProvider, useAmbient } from "@/components/AmbientAudio";
+import { RainAmbience } from "@/components/RainAmbience";
 import appCss from "../styles.css?url";
 
 function NotFoundComponent() {
@@ -123,8 +124,9 @@ function ShellInner() {
       {phase === "granted" && <AccessGranted onComplete={() => setGrantedSeen(true)} />}
       {phase === "app" && (
         <>
+          <RainAmbience intensity={state.userSettings.rainAmbience ?? "subtle"} />
           <TopNav accountName={state.account.accountName} propFirm={state.account.propFirm} />
-          <main className="px-4 pb-12 lg:px-8">
+          <main className="relative z-10 px-4 pb-12 lg:px-8">
             <Outlet />
           </main>
         </>

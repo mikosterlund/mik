@@ -3,7 +3,9 @@ import { motion } from "framer-motion";
 import { Loader2, Mail, Lock as LockIcon } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
+// Use supabase.auth.signInWithOAuth directly so Google sign-in works on
+// non-Lovable hosts (e.g. Netlify), where the /~oauth/* broker worker is
+// not present and would otherwise return a blank SPA page.
 
 type Mode = "signin" | "signup";
 
@@ -55,14 +57,17 @@ export function AuthGate({ onAuthed }: { onAuthed: () => void }) {
     if (busy) return;
     setBusy(true);
     try {
-      const result = await lovable.auth.signInWithOAuth("google", {
-        redirect_uri: window.location.origin,
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: window.location.origin,
+        },
       });
-      if (result.error) {
-        toast.error(result.error.message ?? "Google sign-in failed");
+      if (error) {
+        toast.error(error.message ?? "Google sign-in failed");
         setBusy(false);
       }
-      // If redirected, browser navigates away; nothing else to do.
+      // On success the browser is redirected to Google; nothing else to do.
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
       setBusy(false);

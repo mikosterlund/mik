@@ -76,8 +76,11 @@ export interface AudioSettings {
   src: string;
 }
 
+export type RainAmbience = "off" | "subtle" | "medium";
+
 export interface UserSettings {
   introSound?: "on" | "muted";
+  rainAmbience?: RainAmbience;
 }
 
 export interface AppState {
