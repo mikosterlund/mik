@@ -11,7 +11,7 @@ import { AppStoreProvider, useAppStore } from "@/lib/store";
 import { TopNav } from "@/components/TopNav";
 import { Toaster } from "@/components/ui/sonner";
 import { IntroScreen, shouldShowIntro } from "@/components/IntroScreen";
-import { AccessGate, isAccessUnlocked } from "@/components/AccessGate";
+import { AuthGate } from "@/components/AuthGate";
 import { AccessGranted } from "@/components/AccessGranted";
 import { AmbientProvider, useAmbient } from "@/components/AmbientAudio";
 import appCss from "../styles.css?url";
@@ -83,19 +83,23 @@ function RootShell({ children }: { children: React.ReactNode }) {
 }
 
 function ShellInner() {
-  const { state } = useAppStore();
+  const { state, userId } = useAppStore();
   const [mounted, setMounted] = useState(false);
-  const [phase, setPhase] = useState<"loading" | "intro" | "gate" | "granted" | "app">("loading");
+  const [introDone, setIntroDone] = useState(false);
+  const [grantedSeen, setGrantedSeen] = useState(false);
 
   useEffect(() => {
     setMounted(true);
-    const unlocked = isAccessUnlocked();
-    if (shouldShowIntro()) {
-      setPhase("intro");
-    } else {
-      setPhase(unlocked ? "app" : "gate");
-    }
+    if (!shouldShowIntro()) setIntroDone(true);
   }, []);
+
+  const phase: "intro" | "auth" | "granted" | "app" = !introDone
+    ? "intro"
+    : !userId
+      ? "auth"
+      : !grantedSeen
+        ? "granted"
+        : "app";
 
   const ambient = useAmbient();
   useEffect(() => {
@@ -108,21 +112,15 @@ function ShellInner() {
     }
   }, [phase, ambient, mounted]);
 
-  const afterIntro = () => {
-    setPhase(isAccessUnlocked() ? "app" : "gate");
-  };
-
   if (!mounted) {
-    // SSR / pre-hydration: render an empty shell to avoid any browser-API
-    // access during server rendering. All interactive content mounts on client.
     return <div className="min-h-screen bg-[#05050b]" />;
   }
 
   return (
     <div className="min-h-screen">
-      {phase === "intro" && <IntroScreen onComplete={afterIntro} />}
-      {phase === "gate" && <AccessGate onUnlock={() => setPhase("granted")} />}
-      {phase === "granted" && <AccessGranted onComplete={() => setPhase("app")} />}
+      {phase === "intro" && <IntroScreen onComplete={() => setIntroDone(true)} />}
+      {phase === "auth" && <AuthGate onAuthed={() => { /* userId flip handles transition */ }} />}
+      {phase === "granted" && <AccessGranted onComplete={() => setGrantedSeen(true)} />}
       {phase === "app" && (
         <>
           <TopNav accountName={state.account.accountName} propFirm={state.account.propFirm} />

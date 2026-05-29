@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -28,6 +29,8 @@ import {
   updateTrades,
   updateWeeklyReviews,
 } from "./storage";
+import { fetchCloudState, pushCloudState } from "./cloudSync";
+import { supabase } from "@/integrations/supabase/client";
 
 const daysAgo = (n: number) => {
   const d = new Date();
@@ -131,6 +134,8 @@ const emptyState: AppState = {
 interface Ctx {
   state: AppState;
   hydrated: boolean;
+  userId: string | null;
+  signOut: () => Promise<void>;
   setAccount: (a: Partial<Account>) => void;
   addTrade: (t: Omit<Trade, "id" | "rMultiple">) => void;
   updateTrade: (id: string, t: Partial<Trade>) => void;
@@ -189,8 +194,24 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setHydrated(true);
   }, [hydrated]);
 
-  // setState wrapper: persist SYNCHRONOUSLY on every mutation so data
-  // survives even an immediate tab close after the action.
+  // --- Cloud sync ---
+  const [userId, setUserId] = useState<string | null>(null);
+  const userIdRef = useRef<string | null>(null);
+  const cloudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSyncedUserRef = useRef<string | null>(null);
+
+  const scheduleCloudPush = (next: AppState) => {
+    const uid = userIdRef.current;
+    if (!uid) return;
+    if (cloudTimerRef.current) clearTimeout(cloudTimerRef.current);
+    cloudTimerRef.current = setTimeout(() => {
+      pushCloudState(uid, next);
+    }, 600);
+  };
+
+  // setState wrapper: persist SYNCHRONOUSLY to localStorage on every mutation
+  // (so data survives even an immediate tab close), and schedule a debounced
+  // cloud push so the same data syncs across devices.
   const setState = (updater: AppState | ((prev: AppState) => AppState)) => {
     setStateRaw((prev) => {
       const next =
@@ -198,6 +219,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           ? (updater as (p: AppState) => AppState)(prev)
           : updater;
       saveData(next);
+      scheduleCloudPush(next);
       return next;
     });
   };
@@ -205,7 +227,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // Belt-and-braces: also persist on visibility/pagehide events.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const flush = () => saveData(state);
+    const flush = () => {
+      saveData(state);
+      const uid = userIdRef.current;
+      if (uid) pushCloudState(uid, state);
+    };
     window.addEventListener("pagehide", flush);
     window.addEventListener("beforeunload", flush);
     document.addEventListener("visibilitychange", flush);
@@ -216,12 +242,57 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     };
   }, [state]);
 
+  // Track auth + sync cloud state when the user changes.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleUser = async (uid: string | null) => {
+      userIdRef.current = uid;
+      setUserId(uid);
+      if (!uid) {
+        lastSyncedUserRef.current = null;
+        return;
+      }
+      if (lastSyncedUserRef.current === uid) return;
+      lastSyncedUserRef.current = uid;
+
+      const cloud = await fetchCloudState(uid);
+      if (cloud && Array.isArray(cloud.trades)) {
+        // Cloud is the source of truth across devices — adopt it.
+        setStateRaw(cloud);
+        saveData(cloud);
+        if (import.meta.env.DEV) console.log("[cloudSync] adopted cloud state");
+      } else {
+        // First sign-in on this account: push whatever's local up to the cloud
+        // so the row exists and other devices can pull it. Never overwrite an
+        // existing cloud row with local demo/empty data.
+        const local = loadData(emptyState) ?? state;
+        await pushCloudState(uid, local);
+        if (import.meta.env.DEV) console.log("[cloudSync] seeded cloud from local");
+      }
+    };
+
+    supabase.auth.getSession().then(({ data }) => {
+      handleUser(data.session?.user?.id ?? null);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      handleUser(session?.user?.id ?? null);
+    });
+    return () => sub.subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
 
 
   const value: Ctx = useMemo(
     () => ({
       state,
       hydrated,
+      userId,
+      signOut: async () => {
+        await supabase.auth.signOut();
+      },
       setAccount: (a) =>
         setState((s) => updateSettings(s, { account: { ...s.account, ...a } })),
       addTrade: (t) =>
@@ -341,7 +412,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         ),
       setApexImported: (v) => setState((s) => updateSettings(s, { apexImported: v })),
     }),
-    [state, hydrated],
+    [state, hydrated, userId],
   );
 
   return <AppStoreCtx.Provider value={value}>{children}</AppStoreCtx.Provider>;

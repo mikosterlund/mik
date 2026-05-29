@@ -1,8 +1,9 @@
 import { Link, useLocation } from "@tanstack/react-router";
-import { TrendingUp, Calendar } from "lucide-react";
+import { TrendingUp, Calendar, LogOut } from "lucide-react";
 import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { AmbientControls } from "@/components/AmbientAudio";
+import { useAppStore } from "@/lib/store";
 
 const tabs = [
   { to: "/", label: "Dashboard" },
@@ -63,7 +64,22 @@ export function TopNav({ accountName, propFirm }: { accountName: string; propFir
           <span className="font-medium">{today}</span>
           <Calendar className="h-4 w-4 text-muted-foreground" />
         </div>
+        <SignOutButton />
       </div>
     </motion.header>
+  );
+}
+
+function SignOutButton() {
+  const { signOut, userId } = useAppStore();
+  if (!userId) return null;
+  return (
+    <button
+      onClick={() => signOut()}
+      title="Sign out"
+      className="grid h-10 w-10 place-items-center rounded-xl border border-border bg-card/50 text-muted-foreground transition hover:text-foreground"
+    >
+      <LogOut className="h-4 w-4" />
+    </button>
   );
 }
